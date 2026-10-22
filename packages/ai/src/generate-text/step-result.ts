@@ -416,3 +416,50 @@ export class DefaultStepResult<
     );
   }
 }
+
+/**
+ * Returns the text that structured output parsing should use.
+ *
+ * Some providers (e.g. the OpenAI Responses API) split a single assistant
+ * reply into several messages and tag each message with a `phase` in the
+ * text parts' provider metadata (e.g. `commentary`, `final_answer`).
+ * Joining all message texts produces multiple concatenated JSON documents,
+ * so when parts carry `phase` metadata only the text of the last
+ * `final_answer` message is parsed. Usage metadata and the step content
+ * are left untouched.
+ *
+ * The `text` output spec returns the full step text, since dropping
+ * phase-tagged messages would change what plain-text output contains.
+ */
+export function getOutputParseText<
+  TOOLS extends ToolSet,
+  RUNTIME_CONTEXT extends Context = Context,
+>(step: StepResult<TOOLS, RUNTIME_CONTEXT>, outputName: string): string {
+  if (outputName === 'text') {
+    return step.text;
+  }
+
+  const textParts = step.content.filter(part => part.type === 'text');
+
+  let finalAnswerItemId: unknown;
+  for (const part of textParts) {
+    for (const metadata of Object.values(part.providerMetadata ?? {})) {
+      if (metadata?.phase === 'final_answer') {
+        finalAnswerItemId = metadata.itemId;
+      }
+    }
+  }
+
+  if (finalAnswerItemId === undefined) {
+    return step.text;
+  }
+
+  return textParts
+    .filter(part =>
+      Object.values(part.providerMetadata ?? {}).some(
+        metadata => metadata?.itemId === finalAnswerItemId,
+      ),
+    )
+    .map(part => part.text)
+    .join('');
+}
